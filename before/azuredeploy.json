@@ -1,0 +1,178 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "type": "string",
+            "defaultValue": "eastus",
+            "metadata": {
+                "description": "Location at which the resources are deployed"
+            }
+        },
+        "virtualNetworkName": {
+            "type": "string",
+            "defaultValue": "udacity",
+            "metadata": {
+                "description": "Name of the VNET"
+            }
+        },
+        "virtualNetworkAddressSpace": {
+            "type": "string",
+            "defaultValue": "10.205.0.0/20",
+            "metadata": {
+                "description": "Address space for virtual network"
+            }
+        },
+        "aksSubnetName": {
+            "type": "string",
+            "defaultValue": "aks",
+            "metadata": {
+                "description": "Name of the subnet for aks"
+            }
+        },
+        "aksSubnetAddressSpace": {
+            "type": "string",
+            "defaultValue": "10.205.3.0/24",
+            "metadata": {
+                "description": "Address space for aks subnet"
+            }
+        },
+        "aksClusterName": {
+            "type": "string",
+            "defaultValue": "azsecurity",
+            "metadata": {
+                "description": "Name of the aks cluster"
+            }
+        },
+        "kubernetesVersion": {
+            "type": "string",
+            "defaultValue": "1.18.8",
+            "metadata": {
+                "description": "Version of kubernetes"
+            }
+        },
+        "aksSpnClientId": {
+            "type": "string",
+            "metadata": {
+                "description": "The client identifier of the service principal to be used with aks"
+            }
+        },
+        "aksSpnClientSecret": {
+            "type": "securestring",
+            "metadata": {
+                "description": "The client secret of the service principal to be used with aks"
+            }
+        },
+        "aksNodeSize": {
+            "type": "string",
+            "defaultValue": "Standard_A2_v2"
+        }
+    },
+    "functions": [],
+    "variables": {
+        "aksSubnetNsgName": "[concat(parameters('aksSubnetName'),'-nsg')]",
+        "aksRouteTableName": "[concat(parameters('aksSubnetName'), '-routetable')]",
+        "aksVNetSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets',parameters('virtualNetworkName'),parameters('aksSubnetName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2020-06-01",
+            "name": "[variables('aksSubnetNsgName')]",
+            "location": "[parameters('location')]",
+            "properties":{
+                "securityRules": []
+            }
+        },
+        {
+            "type": "Microsoft.Network/routeTables",
+            "apiVersion": "2020-05-01",
+            "location": "[parameters('location')]",
+            "name": "[variables('aksRouteTableName')]",
+            "properties": {
+                "routes": [
+                    {
+                        "name": "To-Internet",
+                        "properties": {
+                            "addressPrefix": "0.0.0.0/0",
+                            "nextHopType": "Internet"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2020-06-01",
+            "name": "[parameters('virtualNetworkName')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkSecurityGroups', variables('aksSubnetNsgName'))]",
+                "[resourceId('Microsoft.Network/routeTables', variables('aksRouteTableName'))]"
+            ],
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[parameters('virtualNetworkAddressSpace')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[parameters('aksSubnetName')]",
+                        "properties": {
+                            "addressPrefix": "[parameters('aksSubnetAddressSpace')]",
+                            "privateEndpointNetworkPolicies": "Enabled",
+                            "privateLinkServiceNetworkPolicies": "Enabled",
+                            "networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('aksSubnetNsgName'))]"
+                            },
+                            "routeTable": {
+                                "id": "[resourceId('Microsoft.Network/routeTables', variables('aksRouteTableName'))]"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.ContainerService/managedClusters",
+            "name": "[parameters('aksClusterName')]",
+            "apiVersion": "2020-09-01",
+            "location": "[parameters('location')]",
+            "properties": {
+                "kubernetesVersion": "[parameters('kubernetesVersion')]",
+                "dnsPrefix": "[parameters('aksClusterName')]",
+                "agentPoolProfiles": [
+                    {
+                        "name": "default",
+                        "count": 2,
+                        "vmSize": "[parameters('aksNodeSize')]",
+                        "vnetSubnetID": "[variables('aksVNetSubnetId')]",
+                        "osDiskSizeGB": 50,
+                        "osType": "Linux",
+                        "enableAutoScaling": true,
+                        "minCount": 1,
+                        "maxCount": 10,
+                        "type": "VirtualMachineScaleSets",
+                        "storageProfile": "ManagedDisks",
+                        "mode": "System"
+                    }
+                ],
+                "servicePrincipalProfile": {
+                    "clientId": "[parameters('aksSpnClientId')]",
+                    "secret": "[parameters('aksSpnClientSecret')]"
+                },
+                "enableRBAC": true,
+                "networkProfile": {
+                    "networkPolicy": "calico",
+                    "networkPlugin": "kubenet",
+                    "loadBalancerSku": "standard",
+                    "dnsServiceIP": "10.0.0.10",
+                    "serviceCidr": "10.0.0.0/16",
+                    "outboundType": "loadBalancer"
+                }
+            }
+        }
+    ],
+    "outputs": {}
+}
